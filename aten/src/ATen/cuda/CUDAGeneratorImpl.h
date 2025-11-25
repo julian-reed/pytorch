@@ -7,6 +7,8 @@
 #include <atomic>
 #include <memory>
 #include <unordered_set>
+#include <mutex>
+
 namespace at {
 
 namespace cuda {
@@ -101,6 +103,9 @@ struct CUDAGeneratorState : public c10::intrusive_ptr_target {
   std::unordered_set<cuda::CUDAGraph*> registered_graphs_;
   at::TensorBase seed_extragraph_;
   at::TensorBase offset_extragraph_;
+
+  // REED: add mutex
+  mutable std::recursive_mutex graph_state_mutex_;
 
   CUDAGeneratorState(
       uint64_t seed = default_rng_seed_val,

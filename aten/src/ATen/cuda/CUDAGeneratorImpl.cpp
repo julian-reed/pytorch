@@ -97,6 +97,10 @@ void CUDAGeneratorState::increase(uint64_t increment) {
   // requirements.
   // see Note [Why enforce RNG offset % 4 == 0?]
   increment = ((increment + 3) / 4) * 4;
+
+  // REED: lock the mutex to protect the state
+  std::lock_guard<std::recursive_mutex> lock(graph_state_mutex_);
+
   // Handling different behaviors based on whether capturing is active.
   if (at::cuda::currentStreamCaptureStatus() != at::cuda::CaptureStatus::None) {
     // Ensures that the state is actually capturing.
@@ -130,13 +134,16 @@ void CUDAGeneratorState::increase(uint64_t increment) {
  * Registers this state to a CUDA graph to manage within the graph.
  */
 void CUDAGeneratorState::register_graph(cuda::CUDAGraph* graph) {
-  // Ensures that the RNG state is not currently being captured.
-  at::cuda::assertNotCapturing(
-      "Cannot register the state during capturing stage.");
+
+  // REED: lock the mutex to protect the state
+  std::lock_guard<std::recursive_mutex> lock(graph_state_mutex_);
 
   // If this is the first graph to be registered, allocate memory for the seed
   // and offset on the GPU.
   if (registered_graphs_.empty()) {
+    // Ensures that the RNG state is not currently being captured.
+    at::cuda::assertNotCapturing(
+        "Cannot register the state during capturing stage.");
     auto options = at::TensorOptions().device(at::kCUDA).dtype(at::kLong);
     seed_extragraph_ = at::empty({1}, options);
     offset_extragraph_ = at::empty({1}, options);
@@ -153,6 +160,10 @@ void CUDAGeneratorState::register_graph(cuda::CUDAGraph* graph) {
  * Unregisters a CUDA graph from the RNG state.
  */
 void CUDAGeneratorState::unregister_graph(cuda::CUDAGraph* graph) {
+
+  // REED: lock the mutex to protect the state
+  std::lock_guard<std::recursive_mutex> lock(graph_state_mutex_);
+
   // Verify the graph was previously registered.
   TORCH_CHECK(
       registered_graphs_.find(graph) != registered_graphs_.end(),
@@ -192,6 +203,10 @@ void CUDAGeneratorState::unregister_graph(cuda::CUDAGraph* graph) {
  * This method is intended to reset graph-related state variables before capturing begins.
  */
 void CUDAGeneratorState::capture_prologue() {
+
+  // REED: lock the mutex to protect the state
+  std::lock_guard<std::recursive_mutex> lock(graph_state_mutex_);
+
   capturing_ = true;
   offset_intragraph_ = 0;
   seed_extragraph_.fill_(static_cast<int64_t>(seed_));
@@ -203,6 +218,10 @@ void CUDAGeneratorState::capture_prologue() {
  * graph increment.
  */
 uint64_t CUDAGeneratorState::capture_epilogue() {
+
+  // REED: lock the mutex to protect the state
+  std::lock_guard<std::recursive_mutex> lock(graph_state_mutex_);
+
   capturing_ = false;
   return offset_intragraph_;
 }
@@ -212,6 +231,10 @@ uint64_t CUDAGeneratorState::capture_epilogue() {
  * total increment.
  */
 void CUDAGeneratorState::replay_prologue(uint64_t wholegraph_increment) {
+
+  // REED: lock the mutex to protect the state
+  std::lock_guard<std::recursive_mutex> lock(graph_state_mutex_);
+
   // Ensures the generator is not in capturing mode.
   at::cuda::assertNotCapturing(
       "Cannot prepare for replay during capturing stage.");
@@ -461,6 +484,10 @@ void CUDAGeneratorImpl::unregister_graph(cuda::CUDAGraph* graph) {
  */
 PhiloxCudaState CUDAGeneratorImpl::philox_cuda_state(uint64_t increment) {
   if (at::cuda::currentStreamCaptureStatus() != at::cuda::CaptureStatus::None) {
+
+    // REED: lock the mutex to protect the state
+    std::lock_guard<std::recursive_mutex> lock(state_->graph_state_mutex_);
+
     uint64_t offset = state_->offset_intragraph_;
     state_->increase(increment);
     return PhiloxCudaState(
